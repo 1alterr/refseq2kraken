@@ -9,7 +9,7 @@ from refseq2kraken.utils import ensure_dir
 def main():
     parser = argparse.ArgumentParser(
         prog="refseq2kraken",
-        description="RefSeq → Kraken2 pipeline"
+        description="Download Taxonomy → RefSeq (NCBI) → add Kraken → Kraken2 Build"
     )
 
     subparsers = parser.add_subparsers(dest="command")
@@ -30,7 +30,7 @@ def main():
         "download",
         help="Download and process RefSeq sequences"
     )
-    p_dl.add_argument("--group", required=True, help="RefSeq group (plant, fungi, etc)")
+    p_dl.add_argument("--group", required=True, help="RefSeq group (plant, invertebrate, protozoa etc)")
     p_dl.add_argument("--threads", type=int, default=6)
     p_dl.add_argument("--outdir", required=True)
 
