@@ -1,7 +1,10 @@
 import requests
 import os
 import subprocess
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed  # 🔁 MODIFY
+import glob  # 🔥 ADD
+import time  # 🔥 ADD
+import random  # 🔥 ADD
 
 BASE_URL = "https://ftp.ncbi.nlm.nih.gov/genomes/refseq"
 
@@ -22,21 +25,46 @@ def parse_summary(file):
             if line.startswith("#"):
                 continue
             cols = line.strip().split("\t")
-            urls.append(cols[19])
+
+            ftp = cols[19]
+
+            # 🔥 ADD (validação)
+            if ftp == "na" or not ftp.startswith("https"):
+                continue
+
+            urls.append(ftp)
+
     return urls
 
-def download_genome(url, outdir):
+def download_genome(url, outdir, retries=3):
     fname = url.split("/")[-1]
     full_url = f"{url}/{fname}_genomic.fna.gz"
 
-    subprocess.run([
-        "wget", "-q",
-        "-P", outdir,
-        full_url
-    ])
+    for attempt in range(retries):
+        result = subprocess.run(
+            ["wget", "-q", "-P", outdir, full_url]
+        )
+
+        if result.returncode == 0:
+            print(f"[OK] {fname}")
+            return
+        else:
+            print(f"[RETRY {attempt+1}] {fname}")
+
+        # 🔥 ADD (anti-block)
+        time.sleep(random.uniform(0.5, 1.5))
+
+    print(f"[FAIL] {full_url}")
 
 def unzip_all(outdir):
-    subprocess.run(f"gunzip {outdir}/*.gz", shell=True)
+    gz_files = glob.glob(f"{outdir}/*.gz")  # 🔥 ADD
+
+    if not gz_files:
+        print("[WARNING] No .gz files found")
+        return
+
+    with ThreadPoolExecutor(max_workers=8) as ex:  # 🔥 ADD paralelismo
+        ex.map(lambda f: subprocess.run(["gunzip", f]), gz_files)
 
 def download_pipeline(group, threads, outdir):
     os.makedirs(outdir, exist_ok=True)
@@ -46,9 +74,12 @@ def download_pipeline(group, threads, outdir):
 
     print(f"[INFO] Found {len(urls)} genomes")
 
+    # 🔥 ADD (controle real + tracking)
     with ThreadPoolExecutor(max_workers=threads) as ex:
-        for u in urls:
-            ex.submit(download_genome, u, outdir)
+        futures = [ex.submit(download_genome, u, outdir) for u in urls]
+
+        for f in as_completed(futures):
+            pass
 
     unzip_all(outdir)
 
