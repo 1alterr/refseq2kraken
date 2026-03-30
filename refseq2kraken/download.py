@@ -1,10 +1,10 @@
 import requests
 import os
 import subprocess
-from concurrent.futures import ThreadPoolExecutor, as_completed  # 🔁 MODIFY
-import glob  # 🔥 ADD
-import time  # 🔥 ADD
-import random  # 🔥 ADD
+import glob
+import time
+import random
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 BASE_URL = "https://ftp.ncbi.nlm.nih.gov/genomes/refseq"
 
@@ -28,7 +28,6 @@ def parse_summary(file):
 
             ftp = cols[19]
 
-            # 🔥 ADD (validação)
             if ftp == "na" or not ftp.startswith("https"):
                 continue
 
@@ -37,45 +36,49 @@ def parse_summary(file):
     return urls
 
 def download_genome(url, outdir, retries=3):
-    # 🔥 remove barra final se existir
     base = url.rstrip("/").split("/")[-1]
-
-    # 🔥 monta nome correto do arquivo
     fname = f"{base}_genomic.fna.gz"
     full_url = f"{url}/{fname}"
 
-    output_file = os.path.join(outdir, fname)
+    gz_path = os.path.join(outdir, fname)
+    fna_path = gz_path.replace(".gz", "")
 
-    # 🔥 evita re-download
-    if os.path.exists(output_file):
-        print(f"[SKIP] {fname}")
+    # evita re-download (já descompactado)
+    if os.path.exists(fna_path):
+        print(f"[SKIP] {base}")
         return
 
     for attempt in range(retries):
-        result = subprocess.run(
-            ["wget", "-q", "-P", outdir, full_url]
-        )
+        try:
+            # STREAM download + decompress direto
+            wget = subprocess.Popen(
+                ["wget", "-q", "-O", "-", full_url],
+                stdout=subprocess.PIPE
+            )
 
-        if result.returncode == 0:
-            print(f"[OK] {fname}")
-            return
-        else:
-            print(f"[RETRY {attempt+1}] {full_url}")
+            gunzip = subprocess.Popen(
+                ["gunzip"],
+                stdin=wget.stdout,
+                stdout=open(fna_path, "wb")
+            )
 
-        import time, random
+            wget.stdout.close()
+            gunzip.communicate()
+
+            if gunzip.returncode == 0:
+                print(f"[OK] {base}")
+                return
+            else:
+                print(f"[RETRY {attempt+1}] {full_url}")
+
+        except Exception as e:
+            print(f"[ERROR] {e}")
+
         time.sleep(random.uniform(0.5, 1.5))
 
     print(f"[FAIL] {full_url}")
 
-def unzip_all(outdir):
-    gz_files = glob.glob(f"{outdir}/*.gz")
 
-    if not gz_files:
-        print("[WARNING] No .gz files found")
-        return
-
-    with ThreadPoolExecutor(max_workers=8) as ex:  # paralelismo
-        ex.map(lambda f: subprocess.run(["gunzip", f]), gz_files)
 
 def download_pipeline(group, threads, outdir):
     os.makedirs(outdir, exist_ok=True)
@@ -85,13 +88,19 @@ def download_pipeline(group, threads, outdir):
 
     print(f"[INFO] Found {len(urls)} genomes")
 
-    # 🔥 ADD (controle real + tracking)
+    results = []
+
     with ThreadPoolExecutor(max_workers=threads) as ex:
-        futures = [ex.submit(download_genome, u, outdir) for u in urls]
+        futures = []
+
+        for u in urls:
+            futures.append(ex.submit(download_and_unzip, u, outdir))
+            time.sleep(0.05)
 
         for f in as_completed(futures):
-            pass
-
-    unzip_all(outdir)
+            res = f.result()
+            if res:
+                results.append(res)
 
     print("[OK] Download complete")
+    return results
