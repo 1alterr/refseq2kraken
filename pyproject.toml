@@ -1,0 +1,9 @@
+[project]
+name = "refseq2kraken"
+version = "0.1.0"
+description = "Build custom Kraken2 databases from RefSeq"
+authors = [{name="Walter Rosa"}]
+dependencies = ["typer", "requests"]
+
+[project.scripts]
+refseq2kraken = "refseq2kraken.cli:app"

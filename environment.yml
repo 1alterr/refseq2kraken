@@ -1,0 +1,14 @@
+name: refseq2kraken
+channels:
+  - bioconda
+  - conda-forge
+
+dependencies:
+  - python=3.10
+  - kraken2
+  - wget
+  - pigz
+  - pip
+  - pip:
+      - typer
+      - requests
