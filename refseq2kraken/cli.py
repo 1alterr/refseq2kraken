@@ -1,4 +1,4 @@
-import argparse
+import typer
 from refseq2kraken.download import download_pipeline
 from refseq2kraken.kraken import init_db, add_to_library, build_db
 from refseq2kraken.utils import ensure_dir
