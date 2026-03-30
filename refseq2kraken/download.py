@@ -37,8 +37,19 @@ def parse_summary(file):
     return urls
 
 def download_genome(url, outdir, retries=3):
-    fname = url.split("/")[-1]
-    full_url = f"{url}/{fname}_genomic.fna.gz"
+    # 🔥 remove barra final se existir
+    base = url.rstrip("/").split("/")[-1]
+
+    # 🔥 monta nome correto do arquivo
+    fname = f"{base}_genomic.fna.gz"
+    full_url = f"{url}/{fname}"
+
+    output_file = os.path.join(outdir, fname)
+
+    # 🔥 evita re-download
+    if os.path.exists(output_file):
+        print(f"[SKIP] {fname}")
+        return
 
     for attempt in range(retries):
         result = subprocess.run(
@@ -49,21 +60,21 @@ def download_genome(url, outdir, retries=3):
             print(f"[OK] {fname}")
             return
         else:
-            print(f"[RETRY {attempt+1}] {fname}")
+            print(f"[RETRY {attempt+1}] {full_url}")
 
-        # 🔥 ADD (anti-block)
+        import time, random
         time.sleep(random.uniform(0.5, 1.5))
 
     print(f"[FAIL] {full_url}")
 
 def unzip_all(outdir):
-    gz_files = glob.glob(f"{outdir}/*.gz")  # 🔥 ADD
+    gz_files = glob.glob(f"{outdir}/*.gz")
 
     if not gz_files:
         print("[WARNING] No .gz files found")
         return
 
-    with ThreadPoolExecutor(max_workers=8) as ex:  # 🔥 ADD paralelismo
+    with ThreadPoolExecutor(max_workers=8) as ex:  # paralelismo
         ex.map(lambda f: subprocess.run(["gunzip", f]), gz_files)
 
 def download_pipeline(group, threads, outdir):
