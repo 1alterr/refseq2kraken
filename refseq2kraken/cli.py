@@ -9,66 +9,72 @@ from refseq2kraken.utils import ensure_dir
 def main():
     parser = argparse.ArgumentParser(
         prog="refseq2kraken",
-        description=(
-            "Pipeline: Download Taxonomy → RefSeq (NCBI) → add Kraken → Kraken2 Build\n\n"
-            "Steps executed in order:\n"
-            "  1) taxonomy   - download NCBI taxonomy\n"
-            "  2) download   - download RefSeq sequences\n"
-            "  3) add        - add sequences to Kraken2 DB\n"
-            "  4) build      - build Kraken2 database\n"
-        ),
-        formatter_class=argparse.RawTextHelpFormatter
+        description="RefSeq → Kraken2 pipeline"
     )
 
-    # ===== CORE =====
-    parser.add_argument("--group", required=True, help="RefSeq group (ex: plant, fungi)")
-    parser.add_argument("--db", required=True, help="Kraken DB path")
-    parser.add_argument("--outdir", required=True, help="Output directory")
+    subparsers = parser.add_subparsers(dest="command")
 
-    # ===== PERFORMANCE =====
-    parser.add_argument("--download-threads", type=int, default=6, help="Threads for download")
-    parser.add_argument("--build-threads", type=int, default=32, help="Threads for build")
+    # ======================
+    # TAXONOMY
+    # ======================
+    p_tax = subparsers.add_parser(
+        "taxonomy",
+        help="Download NCBI taxonomy"
+    )
+    p_tax.add_argument("--db", required=True, help="Kraken DB path")
 
-    # ===== CONTROL =====
-    parser.add_argument("--skip-taxonomy", action="store_true", help="Skip taxonomy step")
-    parser.add_argument("--skip-download", action="store_true", help="Skip download step")
-    parser.add_argument("--skip-add", action="store_true", help="Skip add step")
-    parser.add_argument("--skip-build", action="store_true", help="Skip build step")
+    # ======================
+    # DOWNLOAD
+    # ======================
+    p_dl = subparsers.add_parser(
+        "download",
+        help="Download and process RefSeq sequences"
+    )
+    p_dl.add_argument("--group", required=True, help="RefSeq group (plant, fungi, etc)")
+    p_dl.add_argument("--threads", type=int, default=6)
+    p_dl.add_argument("--outdir", required=True)
+
+    # ======================
+    # ADD
+    # ======================
+    p_add = subparsers.add_parser(
+        "add",
+        help="Add .fna files to Kraken2 library"
+    )
+    p_add.add_argument("--input", required=True, help="Directory with .fna files")
+    p_add.add_argument("--db", required=True)
+
+    # ======================
+    # BUILD
+    # ======================
+    p_build = subparsers.add_parser(
+        "build",
+        help="Build the Kraken2 database"
+    )
+    p_build.add_argument("--db", required=True)
+    p_build.add_argument("--threads", type=int, default=32)
 
     args = parser.parse_args()
 
-    ensure_dir(args.outdir)
-
-    fna_files = []
-
-    # ===== 1. TAXONOMY =====
-    if not args.skip_taxonomy:
-        print("[1] taxonomy")
+    # ======================
+    # EXECUTION
+    # ======================
+    if args.command == "taxonomy":
         init_db(args.db)
 
-    # ===== 2. DOWNLOAD =====
-    if not args.skip_download:
-        print("[2] download")
-        fna_files = download_pipeline(
-            args.group,
-            args.download_threads,
-            args.outdir
-        )
+    elif args.command == "download":
+        ensure_dir(args.outdir)
+        download_pipeline(args.group, args.threads, args.outdir)
 
-    # ===== 3. ADD =====
-    if not args.skip_add:
-        print("[3] add")
-        if not fna_files:
-            fna_files = glob.glob(f"{args.outdir}/*.fna")
-
+    elif args.command == "add":
+        fna_files = glob.glob(f"{args.input}/*.fna")
         add_to_library(fna_files, args.db)
 
-    # ===== 4. BUILD =====
-    if not args.skip_build:
-        print("[4] build")
-        build_db(args.db, args.build_threads)
+    elif args.command == "build":
+        build_db(args.db, args.threads)
 
-    print("\n[DONE]")
+    else:
+        parser.print_help()
 
 
 if __name__ == "__main__":
