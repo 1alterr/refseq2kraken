@@ -6,4 +6,4 @@ authors = [{name="Walter Rosa"}]
 dependencies = ["typer", "requests"]
 
 [project.scripts]
-refseq2kraken = "refseq2kraken.cli:app"
+refseq2kraken = "refseq2kraken.cli:main"
