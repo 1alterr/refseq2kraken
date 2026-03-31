@@ -157,16 +157,21 @@ def init_db(db_path, threads=5, use_ftp=True):
 
     print("[DONE] Taxonomy ready")
 
-def add_to_library(db_path, genome_files):
+def add_to_library_parallel(db_path, genome_files, threads):
     print("[STEP] Adding genomes to DB")
 
-    for genome in genome_files:
-        run([
-            "kraken2-build",
-            "--add-to-library", str(genome),
-            "--db", db_path
-        ])
+    with ThreadPoolExecutor(max_workers=threads) as executor:
+        futures = [
+            executor.submit(run, [
+                "kraken2-build",
+                "--add-to-library", str(genome),
+                "--db", db_path
+            ])
+            for genome in genome_files
+        ]
 
+        for future in as_completed(futures):
+            future.result()
         
 def build_db(db_path, threads):
     print("[STEP] Building DB")

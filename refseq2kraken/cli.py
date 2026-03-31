@@ -17,40 +17,30 @@ def main():
     # ======================
     # TAXONOMY
     # ======================
-    p_tax = subparsers.add_parser(
-        "taxonomy",
-        help="Download NCBI taxonomy"
-    )
+    p_tax = subparsers.add_parser("taxonomy",help="Download NCBI taxonomy")
     p_tax.add_argument("--db", required=True, help="Kraken DB path")
 
     # ======================
     # DOWNLOAD
     # ======================
-    p_dl = subparsers.add_parser(
-        "download",
-        help="Download and process RefSeq sequences"
-    )
-    p_dl.add_argument("--group",required=True,nargs="+",help="RefSeq groups (ex: bacteria archaea viral)")
+    p_dl = subparsers.add_parser("download", help="Download and process RefSeq sequences")
+    p_dl.add_argument("--group", nargs="?", default=None, help="RefSeq group to download (optional; lists groups if not provided)")
     p_dl.add_argument("--threads", type=int, default=8)
     p_dl.add_argument("--outdir", default="library", help="Output directory for downloaded sequences")
+    p_dl.add_argument("--limit", type=int, default=None)
+    
 
     # ======================
     # ADD
     # ======================
-    p_add = subparsers.add_parser(
-        "add",
-        help="Add .fna files to Kraken2 library"
-    )
+    p_add = subparsers.add_parser("add",help="Add .fna files to Kraken2 library")
     p_add.add_argument("--input", required=True, help="Directory with .fna files")
     p_add.add_argument("--db", required=True)
 
     # ======================
     # BUILD
     # ======================
-    p_build = subparsers.add_parser(
-        "build",
-        help="Build the Kraken2 database"
-    )
+    p_build = subparsers.add_parser("build", help="Build the Kraken2 database")
     p_build.add_argument("--db", required=True)
     p_build.add_argument("--threads", type=int, default=32)
 
@@ -63,8 +53,19 @@ def main():
         init_db(args.db)
 
     elif args.command == "download":
+      if getattr(args, "group", None) is None:
+        print("You did not pass the --group argument.")
+        print("Available RefSeq groups for download:")
+        groups = [
+            "archaea", "bacteria", "fungi", "invertebrate",
+            "plant", "plasmid", "protozoa", "vertebrate_mammalian", 
+            "vertebrate_other", "viral", "plastid", "mitochondrion"
+        ]
+        for g in groups:
+          print(f" - {g}")
+      else:
         ensure_dir(args.outdir)
-        download_pipeline(args.group, args.threads, args.outdir)
+        download_pipeline(args.group, args.threads, args.outdir, limit=args.limit)
 
     elif args.command == "add":
         fna_files = glob.glob(f"{args.input}/*.fna")

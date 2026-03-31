@@ -38,7 +38,6 @@ def fetch_urls(group, outdir):
     summary_file = os.path.join(outdir, "assembly_summary.txt")
 
     if not os.path.exists(summary_file):
-        print(f"Baixando assembly_summary para {group}...")
         download_file(summary_url, summary_file)
 
     urls = []
@@ -51,26 +50,41 @@ def fetch_urls(group, outdir):
             if ftp_path == "na":
                 continue
 
-            fname = ftp_path.split("/")[-1] + "_genomic.fna.gz"
-            urls.append(f"{ftp_path}/{fname}")
+            basename = ftp_path.rstrip("/").split("/")[-1]
+            fname = f"{basename}_genomic.fna.gz"
+            url = f"{ftp_path}/{fname}"
+            
+            urls.append(url)
 
     return urls
 
 
-def download_pipeline(group, threads, outdir):
+def download_pipeline(group, threads, outdir, limit=None):
     group_dir = os.path.join(outdir, group)
     os.makedirs(group_dir, exist_ok=True)
 
     urls = fetch_urls(group, group_dir)
+    
+    if limit is not None:
+      print(f"[PARTIAL MODE] Baixando apenas {limit} sequências (de {len(urls)})")
+      urls = urls[:limit]
 
     print(f"{group}: {len(urls)} genomas encontrados")
-    print(f"Usando {threads} threads\n")
-
+    print(f"Step 1/2: Downloading {len(urls)} genomes for '{group}' from NCBI FTP...")
     with ThreadPoolExecutor(max_workers=threads) as executor:
         futures = []
         for url in urls:
             fname = url.split("/")[-1]
             out_path = os.path.join(group_dir, fname)
+            unzipped_path = out_path.replace(".gz", "")
+
+            # ========================
+            # Pular se já existe
+            # ========================
+            if os.path.exists(unzipped_path):
+                print(f"[SKIP] {unzipped_path} already exists")
+                continue
+
             futures.append(executor.submit(download_file, url, out_path))
 
         for future in as_completed(futures):
@@ -78,4 +92,4 @@ def download_pipeline(group, threads, outdir):
             if gz_file:
                 gunzip_file(gz_file)
 
-    print(f"\n[OK] Download finalizado para {group}")
+    print(f"\n[OK] Download completed for {group}")
