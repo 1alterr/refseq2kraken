@@ -1,82 +1,83 @@
+#!/usr/bin/env python3
 import os
-import requests
-import tarfile
+import sys
 import gzip
 import shutil
+import tarfile
+import requests
 from pathlib import Path
 
-def download_ncbi_file(url, dest_path):
-    """Downloads a file from NCBI via HTTP/HTTPS with stream support."""
-    print(f"[*] Downloading {os.path.basename(url)}...")
-    try:
-        with requests.get(url, stream=True, timeout=30) as r:
-            r.raise_for_status()
-            with open(dest_path, 'wb') as f:
-                shutil.copyfileobj(r.raw, f)
-    except Exception as e:
-        if os.path.exists(dest_path):
-            os.remove(dest_path)
-        raise Exception(f"Failed to download {url}: {e}")
+def download_file(url, dest):
+    print(f"[+] Downloading {url}")
+    with requests.get(url, stream=True, timeout=60) as r:
+        r.raise_for_status()
+        with open(dest, "wb") as f:
+            shutil.copyfileobj(r.raw, f)
 
-def init_taxonomy(db_path):
-    """
-    Python implementation of Kraken2's download_taxonomy.sh.
-    Downloads NCBI taxonomy tree and accession-to-taxon maps.
-    """
-    # 1. Setup Directories 
-    tax_dir = Path(db_path) / "taxonomy"
+def main():
+    if "KRAKEN2_DB_NAME" not in os.environ:
+        print("ERRO: KRAKEN2_DB_NAME não definido", file=sys.stderr)
+        return 1
+
+    baz = os.environ["KRAKEN2_DB_NAME"]
+    tax_dir = Path(baz) / "taxonomy"
     tax_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Store current path to return later
-    original_cwd = os.getcwd()
     os.chdir(tax_dir)
 
-    base_url = "https://ftp.ncbi.nlm.nih.gov/pub/taxonomy"
+    use_ftp = bool(os.environ.get("KRAKEN2_USE_FTP", ""))
+    skip_maps = bool(os.environ.get("KRAKEN2_SKIP_MAPS", ""))
+    prot_db = bool(os.environ.get("KRAKEN2_PROTEIN_DB", ""))
 
-    try:
-        # 2. Download Accession to Taxon Maps [cite: 4, 5]
-        # We focus on nucleotide maps (gb and wgs) as per the original script
-        if not os.path.exists("accmap.dlflag"):
-            for sub in ["gb", "wgs"]:
-                file_name = f"nucl_{sub}.accession2taxid.gz"
-                url = f"{base_url}/accession2taxid/{file_name}"
-                
-                download_ncbi_file(url, file_name)
-                
-                # Uncompress taxonomy data [cite: 8]
-                print(f"[*] Uncompressing {file_name}...")
-                with gzip.open(file_name, 'rb') as f_in:
-                    with open(file_name.replace(".gz", ""), 'wb') as f_out:
-                        shutil.copyfileobj(f_in, f_out)
-                
-                # Clean up .gz to save space
-                os.remove(file_name)
-            
-            Path("accmap.dlflag").touch()
-            print("[OK] Accession maps ready.")
+    ncbi = "ftp.ncbi.nlm.nih.gov"
+    base_rsync = f"rsync://{ncbi}"
+    base_ftp = f"ftp://{ncbi}"
 
-        # 3. Download Taxonomy Tree Data (taxdump) [cite: 7]
-        if not os.path.exists("taxdump.dlflag"):
-            url = f"{base_url}/taxdump.tar.gz"
-            download_ncbi_file(url, "taxdump.tar.gz")
-            Path("taxdump.dlflag").touch()
+    def get(path, dest):
+        if use_ftp:
+            download_file(base_ftp + path, dest)
+        else:
+            # Sistema deve ter rsync instalado
+            cmd = ["rsync", "--no-motd", base_rsync + path, str(dest)]
+            print(f"[+] Rsync: {' '.join(cmd)}")
+            import subprocess
+            subprocess.run(cmd, check=True)
 
-        # 4. Untar Taxonomy Tree Data [cite: 9]
-        if not os.path.exists("taxdump.untarflag"):
-            print("[*] Untarring taxonomy tree data...")
-            with tarfile.open("taxdump.tar.gz", "r:gz") as tar:
-                tar.extractall()
-            Path("taxdump.untarflag").touch()
-            print("[OK] Taxonomy tree ready.")
+    if not Path("accmap.dlflag").exists() and not skip_maps:
+        if not prot_db:
+            for sub in ("gb", "wgs"):
+                print(f"Baixando nucl_{sub}.accession2taxid.gz")
+                get(f"/pub/taxonomy/accession2taxid/nucl_{sub}.accession2taxid.gz", f"nucl_{sub}.accession2taxid.gz")
+        else:
+            print("Baixando prot.accession2taxid.gz")
+            get("/pub/taxonomy/accession2taxid/prot.accession2taxid.gz", "prot.accession2taxid.gz")
 
-    finally:
-        os.chdir(original_cwd)
+        Path("accmap.dlflag").touch()
+        print("Downloaded accession to taxon map(s)")
 
-    print("\n[SUCCESS] Taxonomy step complete.")
+    if not Path("taxdump.dlflag").exists():
+        print("Baixando taxdump.tar.gz")
+        get("/pub/taxonomy/taxdump.tar.gz", "taxdump.tar.gz")
+        Path("taxdump.dlflag").touch()
 
+    if any(Path(p).name.endswith("accession2taxid.gz") for p in os.listdir(".")):
+        print("Uncompressing taxonomy data...")
+        for gzfile in Path(".").glob("*accession2taxid.gz"):
+            with gzip.open(gzfile, "rb") as f_in, open(gzfile.with_suffix(""), "wb") as f_out:
+                shutil.copyfileobj(f_in, f_out)
+            gzfile.unlink()
+        print("done.")
 
-def add_to_library(fna_files, db_path):
-    print("[STEP] Adding genomes to DB")
+    if not Path("taxdump.untarflag").exists():
+        print("Untarring taxonomy tree data...")
+        with tarfile.open("taxdump.tar.gz", "r:gz") as tar:
+            tar.extractall()
+        Path("taxdump.untarflag").touch()
+        print("done.")
+
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())
 
     for f in fna_files:
         subprocess.run([
