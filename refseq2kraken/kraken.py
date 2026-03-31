@@ -1,80 +1,161 @@
-#!/usr/bin/env python3
 import os
-import sys
-import gzip
-import shutil
-import tarfile
-import requests
+import subprocess
+import hashlib
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-def download_file(url, dest):
-    print(f"[+] Downloading {url}")
-    with requests.get(url, stream=True, timeout=60) as r:
-        r.raise_for_status()
-        with open(dest, "wb") as f:
-            shutil.copyfileobj(r.raw, f)
 
-def main():
-    if "KRAKEN2_DB_NAME" not in os.environ:
-        print("ERRO: KRAKEN2_DB_NAME não definido", file=sys.stderr)
-        return 1
+NCBI_FTP = "ftp://ftp.ncbi.nlm.nih.gov"
+NCBI_RSYNC = "rsync://ftp.ncbi.nlm.nih.gov"
 
-    baz = os.environ["KRAKEN2_DB_NAME"]
-    tax_dir = Path(baz) / "taxonomy"
-    tax_dir.mkdir(parents=True, exist_ok=True)
-    os.chdir(tax_dir)
 
-    use_ftp = bool(os.environ.get("KRAKEN2_USE_FTP", ""))
-    skip_maps = bool(os.environ.get("KRAKEN2_SKIP_MAPS", ""))
-    prot_db = bool(os.environ.get("KRAKEN2_PROTEIN_DB", ""))
+def run(cmd, cwd=None):
+    print(f"[CMD] {' '.join(cmd)}")
+    subprocess.run(cmd, check=True, cwd=cwd)
 
-    ncbi = "ftp.ncbi.nlm.nih.gov"
-    base_rsync = f"rsync://{ncbi}"
-    base_ftp = f"ftp://{ncbi}"
 
-    def get(path, dest):
-        if use_ftp:
-            download_file(base_ftp + path, dest)
-        else:
-            # Sistema deve ter rsync instalado
-            cmd = ["rsync", "--no-motd", base_rsync + path, str(dest)]
-            print(f"[+] Rsync: {' '.join(cmd)}")
-            import subprocess
-            subprocess.run(cmd, check=True)
+def md5sum(file_path):
+    hash_md5 = hashlib.md5()
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            hash_md5.update(chunk)
+    return hash_md5.hexdigest()
 
-    if not Path("accmap.dlflag").exists() and not skip_maps:
-        if not prot_db:
-            for sub in ("gb", "wgs"):
-                print(f"Baixando nucl_{sub}.accession2taxid.gz")
-                get(f"/pub/taxonomy/accession2taxid/nucl_{sub}.accession2taxid.gz", f"nucl_{sub}.accession2taxid.gz")
-        else:
-            print("Baixando prot.accession2taxid.gz")
-            get("/pub/taxonomy/accession2taxid/prot.accession2taxid.gz", "prot.accession2taxid.gz")
 
-        Path("accmap.dlflag").touch()
-        print("Downloaded accession to taxon map(s)")
+def read_md5(md5_file):
+    with open(md5_file) as f:
+        return f.read().split()[0]
 
-    if not Path("taxdump.dlflag").exists():
-        print("Baixando taxdump.tar.gz")
-        get("/pub/taxonomy/taxdump.tar.gz", "taxdump.tar.gz")
-        Path("taxdump.dlflag").touch()
 
-    if any(Path(p).name.endswith("accession2taxid.gz") for p in os.listdir(".")):
-        print("Uncompressing taxonomy data...")
-        for gzfile in Path(".").glob("*accession2taxid.gz"):
-            with gzip.open(gzfile, "rb") as f_in, open(gzfile.with_suffix(""), "wb") as f_out:
-                shutil.copyfileobj(f_in, f_out)
-            gzfile.unlink()
-        print("done.")
+def verify_md5(file_path, md5_path):
+    print(f"[CHECK] {file_path.name}")
+    expected = read_md5(md5_path)
+    observed = md5sum(file_path)
 
-    if not Path("taxdump.untarflag").exists():
-        print("Untarring taxonomy tree data...")
-        with tarfile.open("taxdump.tar.gz", "r:gz") as tar:
-            tar.extractall()
-        Path("taxdump.untarflag").touch()
-        print("done.")
+    if expected != observed:
+        print(f"[ERROR] MD5 mismatch for {file_path.name}")
+        return False
 
-    return 0
+    print(f"[OK] MD5 verified for {file_path.name}")
+    return True
+
+
+def download_one(file_path, outdir, use_ftp=True, retries=2):
+    filename = os.path.basename(file_path)
+    dest = Path(outdir) / filename
+    md5_file = filename + ".md5"
+    md5_dest = Path(outdir) / md5_file
+
+    for attempt in range(retries + 1):
+
+        # Skip if already valid
+        if dest.exists() and md5_dest.exists():
+            if verify_md5(dest, md5_dest):
+                print(f"[SKIP] {filename} already valid")
+                return
+
+        try:
+            # =========================
+            # DOWNLOAD FILE + MD5
+            # =========================
+            if use_ftp:
+                print(f"[FTP] {filename}")
+                run(["wget", "-q", f"{NCBI_FTP}{file_path}"], cwd=outdir)
+                run(["wget", "-q", f"{NCBI_FTP}{file_path}.md5"], cwd=outdir)
+            else:
+                print(f"[RSYNC] {filename}")
+                run(["rsync", "--no-motd", f"{NCBI_RSYNC}{file_path}", "."], cwd=outdir)
+                run(["rsync", "--no-motd", f"{NCBI_RSYNC}{file_path}.md5", "."], cwd=outdir)
+
+            # =========================
+            # VERIFY
+            # =========================
+            if verify_md5(dest, md5_dest):
+                return
+            else:
+                raise Exception("MD5 failed")
+
+        except Exception as e:
+            print(f"[WARN] attempt {attempt+1} failed for {filename}: {e}")
+
+            if dest.exists():
+                dest.unlink()
+            if md5_dest.exists():
+                md5_dest.unlink()
+
+            if attempt == retries:
+                raise RuntimeError(f"Failed to download {filename}")
+
+
+def parallel_download(files, outdir, threads=5):
+    with ThreadPoolExecutor(max_workers=threads) as executor:
+        futures = [
+            executor.submit(download_one, f, outdir)
+            for f in files
+        ]
+
+        for future in as_completed(futures):
+            future.result()
+
+
+def init_db(db_path, threads=5, use_ftp=True):
+    taxonomy_dir = Path(db_path) / "taxonomy"
+    taxonomy_dir.mkdir(parents=True, exist_ok=True)
+
+    print("[STEP] Initializing Kraken2 taxonomy DB")
+
+    subsections = ["gb", "wgs"]
+    
+    accession_files = [
+            f"/pub/taxonomy/accession2taxid/nucl_{s}.accession2taxid.gz"
+            for s in subsections
+    ]
+
+    taxdump_file = "/pub/taxonomy/taxdump.tar.gz"
+
+    # =========================
+    # ACCESSION MAPS
+    # =========================
+    if not (taxonomy_dir / "accmap.dlflag").exists():
+        print("[STEP] Downloading accession maps")
+        parallel_download(accession_files, taxonomy_dir, threads)
+
+        # EXTRA opcional
+        try:
+            extra = "/pub/taxonomy/accession2taxid/nucl_wgs.accession2taxid.EXTRA.gz"
+            download_one(extra, taxonomy_dir)
+        except Exception:
+            print("[INFO] EXTRA not available")
+
+        (taxonomy_dir / "accmap.dlflag").touch()
+
+    # =========================
+    # TAXDUMP
+    # =========================
+    if not (taxonomy_dir / "taxdump.dlflag").exists():
+        print("[STEP] Downloading taxonomy tree")
+        download_one(taxdump_file, taxonomy_dir)
+        (taxonomy_dir / "taxdump.dlflag").touch()
+
+    # =========================
+    # UNZIP
+    # =========================
+    gz_files = list(taxonomy_dir.glob("*accession2taxid.gz"))
+
+    if gz_files:
+        print("[STEP] Uncompressing accession maps")
+        for f in gz_files:
+            run(["gunzip", str(f)], cwd=taxonomy_dir)
+
+    # =========================
+    # UNTAR
+    # =========================
+    if not (taxonomy_dir / "taxdump.untarflag").exists():
+        print("[STEP] Extracting taxonomy")
+        run(["tar", "zxf", "taxdump.tar.gz"], cwd=taxonomy_dir)
+        (taxonomy_dir / "taxdump.untarflag").touch()
+
+    print("[DONE] Taxonomy ready")
 
 if __name__ == "__main__":
     sys.exit(main())
