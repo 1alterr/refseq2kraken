@@ -131,7 +131,7 @@ refseq2kraken/
 
 If you use this tool in your research, please cite:
 
-> Conceição Filho, W.R. (2026). *refseq2kraken: A flexible pipeline for building custom Kraken2 databases from RefSeq.*
+> Rosa-Filho, W. (2026). *refseq2kraken: A flexible pipeline for building custom Kraken2 databases from RefSeq.*
 
 (Preprint/manuscript in preparation)
 
@@ -151,7 +151,7 @@ Contributions are welcome! Please open an issue or submit a pull request.
 
 ## 👨‍🔬 Author
 
-**Walter Rosa da Conceição Filho**
+**Walter Rosa-Filho**
 MSc in Ecology & Evolution | Bioinformatics & Genomics
 Federal University of Goiás (UFG), Brazil
 
