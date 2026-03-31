@@ -157,7 +157,7 @@ def init_db(db_path, threads=5, use_ftp=True):
 
     print("[DONE] Taxonomy ready")
 
-def add_genomes(db_path, genome_files):
+def add_to_library(db_path, genome_files):
     print("[STEP] Adding genomes to DB")
 
     for genome in genome_files:
