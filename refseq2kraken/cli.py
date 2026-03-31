@@ -30,9 +30,9 @@ def main():
         "download",
         help="Download and process RefSeq sequences"
     )
-    p_dl.add_argument("--group", required=True, help="RefSeq group (plant, invertebrate, protozoa etc)")
-    p_dl.add_argument("--threads", type=int, default=6)
-    p_dl.add_argument("--outdir", required=True)
+    p_dl.add_argument("--group",required=True,nargs="+",help="RefSeq groups (ex: bacteria archaea viral)")
+    p_dl.add_argument("--threads", type=int, default=8)
+    p_dl.add_argument("--outdir", default="library", help="Output directory for downloaded sequences")
 
     # ======================
     # ADD

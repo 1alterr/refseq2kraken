@@ -1,138 +1,81 @@
-#!/usr/bin/env python3
-
 import os
+import requests
 import gzip
-import urllib.request
+import shutil
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-NCBI_BASE = "https://ftp.ncbi.nlm.nih.gov/genomes/refseq"
-VALID_LEVELS = {"Complete Genome", "Chromosome"}
+BASE_FTP = "https://ftp.ncbi.nlm.nih.gov/genomes/refseq"
 
 
-# =========================
-# DOWNLOAD
-# =========================
-def download_file(url: str, output_path: str) -> bool:
+def download_file(url, out_path):
     try:
-        print(f"[+] Downloading: {url}")
-        urllib.request.urlretrieve(url, output_path)
-        return True
+        r = requests.get(url, stream=True, timeout=60)
+        r.raise_for_status()
+        with open(out_path, "wb") as f:
+            for chunk in r.iter_content(chunk_size=8192):
+                f.write(chunk)
+        return out_path
     except Exception as e:
-        print(f"[ERROR] Failed download: {url} -> {e}")
-        return False
+        print(f"[ERRO] {url}: {e}")
+        return None
 
 
-# =========================
-# PARSE ASSEMBLY
-# =========================
-def parse_assembly_summary(file_path: str):
-    entries = []
+def gunzip_file(gz_path):
+    try:
+        out_path = gz_path.replace(".gz", "")
+        with gzip.open(gz_path, "rb") as f_in:
+            with open(out_path, "wb") as f_out:
+                shutil.copyfileobj(f_in, f_out)
+        os.remove(gz_path)
+        return out_path
+    except Exception as e:
+        print(f"[ERRO unzip] {gz_path}: {e}")
+        return None
 
-    with open(file_path) as f:
+
+def fetch_urls(group, outdir):
+    summary_url = f"{BASE_FTP}/{group}/assembly_summary.txt"
+    summary_file = os.path.join(outdir, "assembly_summary.txt")
+
+    if not os.path.exists(summary_file):
+        print(f"Baixando assembly_summary para {group}...")
+        download_file(summary_url, summary_file)
+
+    urls = []
+    with open(summary_file) as f:
         for line in f:
             if line.startswith("#"):
                 continue
-
             cols = line.strip().split("\t")
-
-            try:
-                taxid = cols[5]
-                asm_level = cols[11]
-                ftp_path = cols[19]
-            except IndexError:
-                continue
-
-            if asm_level not in VALID_LEVELS:
-                continue
-
+            ftp_path = cols[19]
             if ftp_path == "na":
                 continue
 
-            basename = os.path.basename(ftp_path)
-            fna_url = f"{ftp_path}/{basename}_genomic.fna.gz"
+            fname = ftp_path.split("/")[-1] + "_genomic.fna.gz"
+            urls.append(f"{ftp_path}/{fname}")
 
-            entries.append((taxid, fna_url))
-
-    return entries
+    return urls
 
 
-# =========================
-# PROCESS FASTA
-# =========================
-def process_fasta(gz_file: str, taxid: str, fasta_out, map_out):
-    with gzip.open(gz_file, "rt") as f_in:
-        for line in f_in:
-            if line.startswith(">"):
-                header = line.strip()
-                seq_id = header.split()[0][1:]
+def download_pipeline(group, threads, outdir):
+    group_dir = os.path.join(outdir, group)
+    os.makedirs(group_dir, exist_ok=True)
 
-                new_header = f">kraken:taxid|{taxid}|{header[1:]}\n"
-                fasta_out.write(new_header)
+    urls = fetch_urls(group, group_dir)
 
-                map_out.write(f"{seq_id}\t{taxid}\n")
-            else:
-                fasta_out.write(line)
+    print(f"{group}: {len(urls)} genomas encontrados")
+    print(f"Usando {threads} threads\n")
 
+    with ThreadPoolExecutor(max_workers=threads) as executor:
+        futures = []
+        for url in urls:
+            fname = url.split("/")[-1]
+            out_path = os.path.join(group_dir, fname)
+            futures.append(executor.submit(download_file, url, out_path))
 
-# =========================
-# PIPELINE
-# =========================
-def download_pipeline(group: str, threads: int, outdir: str):
-    print(f"[INFO] Starting download for group: {group}")
+        for future in as_completed(futures):
+            gz_file = future.result()
+            if gz_file:
+                gunzip_file(gz_file)
 
-    # Paths
-    assembly_file = os.path.join(outdir, "assembly_summary.txt")
-    downloads_dir = os.path.join(outdir, "downloads")
-    library_path = os.path.join(outdir, "library.fna")
-    map_path = os.path.join(outdir, "prelim_map.txt")
-
-    os.makedirs(downloads_dir, exist_ok=True)
-
-    # =========================
-    # STEP 1: Download assembly summary
-    # =========================
-    assembly_url = f"{NCBI_BASE}/{group}/assembly_summary.txt"
-
-    if not download_file(assembly_url, assembly_file):
-        raise RuntimeError("Failed to download assembly_summary.txt")
-
-    # =========================
-    # STEP 2: Parse entries
-    # =========================
-    entries = parse_assembly_summary(assembly_file)
-    total = len(entries)
-
-    if total == 0:
-        raise RuntimeError("No valid genome entries found")
-
-    print(f"[INFO] {total} genomes selected")
-
-    # =========================
-    # STEP 3: Download + process
-    # =========================
-    with open(library_path, "w") as fasta_out, \
-         open(map_path, "w") as map_out:
-
-        for i, (taxid, url) in enumerate(entries, 1):
-            filename = os.path.join(downloads_dir, os.path.basename(url))
-
-            if not download_file(url, filename):
-                continue
-
-            try:
-                process_fasta(filename, taxid, fasta_out, map_out)
-            except Exception as e:
-                print(f"[WARN] Failed processing {filename}: {e}")
-                continue
-
-            # Remove downloaded file
-            try:
-                os.remove(filename)
-            except OSError:
-                pass
-
-            print(f"[{i}/{total}] processed")
-
-    print("[OK] Download complete")
-    print(f"[INFO] Output:")
-    print(f" - {library_path}")
-    print(f" - {map_path}")
+    print(f"\n[OK] Download finalizado para {group}")
