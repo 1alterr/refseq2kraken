@@ -9,7 +9,6 @@ NCBI_RSYNC = "rsync://ftp.ncbi.nlm.nih.gov"
 
 
 def run(cmd, cwd=None):
-    print(f"[CMD] {' '.join(cmd)}")
     subprocess.run(cmd, check=True, cwd=cwd)
 
 
@@ -28,7 +27,6 @@ def download_one(file_path, outdir, use_ftp=True):
     if use_ftp:
         try:
             url = f"{NCBI_FTP}{file_path}"
-            print(f"[FTP] {filename}")
             run(["wget", "-q", url], cwd=outdir)
             return
         except subprocess.CalledProcessError:
@@ -36,7 +34,6 @@ def download_one(file_path, outdir, use_ftp=True):
 
     # Fallback rsync
     url = f"{NCBI_RSYNC}{file_path}"
-    print(f"[RSYNC] {filename}")
     run(["rsync", "--no-motd", url, "."], cwd=outdir)
 
 
@@ -62,7 +59,7 @@ def init_db(db_path, threads=5, use_ftp=True):
     taxonomy_dir = Path(db_path) / "taxonomy"
     taxonomy_dir.mkdir(parents=True, exist_ok=True)
 
-    print("[STEP] Initializing Kraken2 taxonomy DB")
+    print("Initializing Download taxonomy")
 
     # =========================
     # FILE LIST (Kraken2-compatible)
@@ -80,7 +77,7 @@ def init_db(db_path, threads=5, use_ftp=True):
     # DOWNLOAD ACCESSION MAPS
     # =========================
     if not (taxonomy_dir / "accmap.dlflag").exists():
-        print("[STEP] Downloading accession maps (parallel)")
+        print("Downloading accession maps (parallel)")
         parallel_download(accession_files, taxonomy_dir, threads)
 
         # EXTRA opcional (não quebra se falhar)
@@ -97,7 +94,7 @@ def init_db(db_path, threads=5, use_ftp=True):
     # DOWNLOAD TAXDUMP
     # =========================
     if not (taxonomy_dir / "taxdump.dlflag").exists():
-        print("[STEP] Downloading taxonomy tree")
+        print("Downloading taxonomy tree")
         download_one(taxdump_file, taxonomy_dir)
         (taxonomy_dir / "taxdump.dlflag").touch()
 
@@ -107,7 +104,7 @@ def init_db(db_path, threads=5, use_ftp=True):
     gz_files = list(taxonomy_dir.glob("*accession2taxid.gz"))
 
     if gz_files:
-        print("[STEP] Uncompressing accession maps")
+        print("Uncompressing accession maps")
         for f in gz_files:
             run(["gunzip", str(f)], cwd=taxonomy_dir)
 
@@ -115,7 +112,7 @@ def init_db(db_path, threads=5, use_ftp=True):
     # UNTAR taxdump
     # =========================
     if not (taxonomy_dir / "taxdump.untarflag").exists():
-        print("[STEP] Extracting taxonomy")
+        print("Extracting taxonomy")
         run(["tar", "zxf", "taxdump.tar.gz"], cwd=taxonomy_dir)
         (taxonomy_dir / "taxdump.untarflag").touch()
 
