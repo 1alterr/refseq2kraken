@@ -157,17 +157,17 @@ def init_db(db_path, threads=5, use_ftp=True):
 
     print("[DONE] Taxonomy ready")
 
-if __name__ == "__main__":
-    sys.exit(main())
+def add_genomes(db_path, genome_files):
+    print("[STEP] Adding genomes to DB")
 
-    for f in fna_files:
-        subprocess.run([
+    for genome in genome_files:
+        run([
             "kraken2-build",
-            "--add-to-library", f,
+            "--add-to-library", str(genome),
             "--db", db_path
-        ], check=True)
+        ])
 
-
+        
 def build_db(db_path, threads):
     print("[STEP] Building DB")
 
